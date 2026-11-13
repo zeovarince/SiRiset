@@ -1,0 +1,335 @@
+// SiRiset — Sistem Informasi MBKM Riset Terpadu Teknik Informatika UTM
+// Sumber: markdown/database-schema.md (Bagian 4)
+//
+// Catatan adaptasi SQLite (dev lokal):
+// - Atribut native type `@db.Decimal(p, s)` dihapus karena SQLite tidak mendukungnya;
+//   tipe `Decimal` tetap dipakai sehingga presisi aritmatika di Prisma Client sama.
+//   Saat beralih ke PostgreSQL, tambahkan kembali `@db.Decimal(3, 2)` / `@db.Decimal(5, 2)`.
+// - Enum didukung SQLite sejak Prisma 6.2 (disimpan sebagai TEXT).
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RoleCode {
+  MAHASISWA
+  DOSEN_PENELITI
+  DOSEN_WALI
+  KAPRODI
+  KOORDINATOR_MBKM
+  LPPM_REVIEWER
+  ADMIN
+}
+
+enum VacancyStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  COMPLETED
+}
+
+// Fase 3: VERIFIED diganti APPROVAL_COMPLETE (api-spec §5.2) + REVISION_REQUIRED (bpmn-tobe §8 kasus 2)
+enum ApplicationStatus {
+  SUBMITTED // menunggu seleksi Dosen Peneliti (SLA 7 hari kerja)
+  DOSEN_ACCEPTED // diterima dosen; fork 3 e-approval dibuat, belum ada keputusan
+  APPROVAL_PENDING // e-approval paralel berjalan (≥ 1 pihak sudah menyetujui)
+  REVISION_REQUIRED // salah satu pihak meminta revisi; menunggu perbaikan mahasiswa
+  APPROVAL_COMPLETE // join: ketiga pihak menyetujui; menunggu validasi Koordinator MBKM
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+}
+
+enum ApprovalRole {
+  DOSEN_WALI
+  DOSEN_PENELITI
+  KAPRODI
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LogbookStatus {
+  DRAFT
+  SUBMITTED
+  VALIDATED
+  REVISION_NEEDED
+}
+
+enum OutputType {
+  JURNAL
+  PROSIDING
+  POSTER
+  PROTOTIPE
+}
+
+model User {
+  id                String   @id @default(uuid())
+  nimNip            String   @unique @map("nim_nip")
+  fullName          String   @map("full_name")
+  email             String   @unique
+  passwordHash      String   @map("password_hash")
+  phoneNumber       String?  @map("phone_number")
+  isActive          Boolean  @default(true) @map("is_active")
+  createdAt         DateTime @default(now()) @map("created_at")
+  // Ekstensi Fase 3: Dosen Wali (perwalian akademik) mahasiswa — penentu approver DOSEN_WALI
+  academicAdvisorId String?  @map("academic_advisor_id")
+
+  academicAdvisor User?  @relation("AcademicAdvisor", fields: [academicAdvisorId], references: [id], onDelete: SetNull)
+  advisees        User[] @relation("AcademicAdvisor")
+
+  roles          UserRole[]
+  vacancies      ResearchVacancy[]
+  applications   Application[]         @relation("StudentApplications")
+  approvals      ApplicationApproval[]
+  logbookReviews LogbookReview[]
+  monevReviews   MonevEvaluation[]
+  assessments    GradeAssessment[]
+  auditLogs      AuditLog[]
+  syncLogs       SimpelmasSyncLog[]
+
+  @@map("users")
+}
+
+model UserRole {
+  id       String   @id @default(uuid())
+  userId   String   @map("user_id")
+  roleCode RoleCode @map("role_code")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleCode])
+  @@index([userId])
+  @@map("user_roles")
+}
+
+model ResearchVacancy {
+  id                   String        @id @default(uuid())
+  lecturerId           String        @map("lecturer_id")
+  grantContractNumber  String        @map("grant_contract_number")
+  grantScheme          String        @map("grant_scheme")
+  title                String
+  description          String
+  quota                Int
+  requiredSkills       String        @map("required_skills")
+  applicationStartDate DateTime      @map("application_start_date")
+  applicationEndDate   DateTime      @map("application_end_date")
+  status               VacancyStatus @default(PUBLISHED)
+  createdAt            DateTime      @default(now()) @map("created_at")
+
+  lecturer     User          @relation(fields: [lecturerId], references: [id])
+  applications Application[]
+
+  @@index([lecturerId])
+  @@index([status])
+  @@map("research_vacancies")
+}
+
+model Application {
+  id                      String            @id @default(uuid())
+  vacancyId               String            @map("vacancy_id")
+  studentId               String            @map("student_id")
+  gpaAtApplication        Decimal           @map("gpa_at_application")
+  mandatoryCoursesPassed  Boolean           @default(true) @map("mandatory_courses_passed")
+  proposalTitle           String            @map("proposal_title")
+  proposalFileUrl         String            @map("proposal_file_url")
+  conversionScheme        String            @default("MB04") @map("conversion_scheme")
+  includesKpConversion    Boolean           @default(false) @map("includes_kp_conversion")
+  status                  ApplicationStatus @default(SUBMITTED)
+  slaDeadline             DateTime          @map("sla_deadline")
+  // Ekstensi Fase 2: keputusan seleksi Dosen Peneliti (alasan penolakan wajib diketahui mahasiswa)
+  selectionNotes          String?           @map("selection_notes")
+  selectionDecidedAt      DateTime?         @map("selection_decided_at")
+  // Ekstensi Fase 4: validasi akhir Koordinator MBKM = tanggal mulai pelaksanaan riset (FR-05.2)
+  coordinatorValidatedAt  DateTime?         @map("coordinator_validated_at")
+  // Kode stempel QR dibekukan saat join APPROVAL_COMPLETE — acuan pemeriksaan integritas koordinator
+  approvalCertificateCode String?           @map("approval_certificate_code")
+  createdAt               DateTime          @default(now()) @map("created_at")
+
+  vacancy         ResearchVacancy       @relation(fields: [vacancyId], references: [id])
+  student         User                  @relation("StudentApplications", fields: [studentId], references: [id])
+  approvals       ApplicationApproval[]
+  logbooks        Logbook[]
+  progressReports ProgressReport[]
+  outputs         ResearchOutput[]
+  assessment      GradeAssessment?
+  syncLogs        SimpelmasSyncLog[]
+
+  @@unique([vacancyId, studentId]) // NFR-05: cegah duplikasi pengajuan
+  @@index([vacancyId])
+  @@index([studentId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("applications")
+}
+
+model ApplicationApproval {
+  id            String         @id @default(uuid())
+  applicationId String         @map("application_id")
+  approverId    String         @map("approver_id")
+  approverRole  ApprovalRole   @map("approver_role")
+  status        ApprovalStatus @default(PENDING)
+  notes         String?
+  decidedAt     DateTime?      @map("decided_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  approver    User        @relation(fields: [approverId], references: [id])
+
+  @@unique([applicationId, approverRole])
+  @@index([approverId, status])
+  @@map("application_approvals")
+}
+
+model Logbook {
+  id                   String        @id @default(uuid())
+  applicationId        String        @map("application_id")
+  weekNumber           Int           @map("week_number")
+  activityDate         DateTime      @map("activity_date")
+  durationHours        Int           @map("duration_hours")
+  activityDescription  String        @map("activity_description")
+  challengesFaced      String?       @map("challenges_faced")
+  solutionsImplemented String?       @map("solutions_implemented")
+  evidenceFileUrl      String?       @map("evidence_file_url")
+  repositoryLink       String?       @map("repository_link")
+  status               LogbookStatus @default(SUBMITTED)
+  isLate               Boolean       @default(false) @map("is_late")
+  submittedAt          DateTime      @default(now()) @map("submitted_at")
+
+  application Application     @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  reviews     LogbookReview[]
+
+  @@unique([applicationId, weekNumber])
+  @@index([status])
+  @@map("logbooks")
+}
+
+model LogbookReview {
+  id            String   @id @default(uuid())
+  logbookId     String   @map("logbook_id")
+  reviewerId    String   @map("reviewer_id")
+  reviewStatus  String   @map("review_status") // APPROVED | REVISION_REQUESTED
+  feedbackNotes String?  @map("feedback_notes")
+  reviewedAt    DateTime @default(now()) @map("reviewed_at")
+
+  logbook  Logbook @relation(fields: [logbookId], references: [id], onDelete: Cascade)
+  reviewer User    @relation(fields: [reviewerId], references: [id])
+
+  @@index([logbookId])
+  @@map("logbook_reviews")
+}
+
+model ProgressReport {
+  id                      String   @id @default(uuid())
+  applicationId           String   @map("application_id")
+  reportTitle             String   @map("report_title")
+  reportFileUrl           String   @map("report_file_url")
+  researchProgressSummary String   @map("research_progress_summary")
+  estimatedPercentage     Decimal  @map("estimated_percentage")
+  submittedAt             DateTime @default(now()) @map("submitted_at")
+
+  application      Application       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  monevEvaluations MonevEvaluation[]
+
+  @@index([applicationId])
+  @@map("progress_reports")
+}
+
+model MonevEvaluation {
+  id                         String   @id @default(uuid())
+  progressReportId           String   @map("progress_report_id")
+  reviewerId                 String   @map("reviewer_id")
+  scoreProgress              Decimal  @map("score_progress")
+  scoreMethodology           Decimal  @map("score_methodology")
+  evaluationNotes            String   @map("evaluation_notes")
+  improvementRecommendations String?  @map("improvement_recommendations")
+  evaluatedAt                DateTime @default(now()) @map("evaluated_at")
+
+  progressReport ProgressReport @relation(fields: [progressReportId], references: [id], onDelete: Cascade)
+  reviewer       User           @relation(fields: [reviewerId], references: [id])
+
+  @@unique([progressReportId, reviewerId]) // Fase 6: satu penilaian per reviewer per laporan
+  @@index([progressReportId])
+  @@map("monev_evaluations")
+}
+
+model ResearchOutput {
+  id                    String     @id @default(uuid())
+  applicationId         String     @map("application_id")
+  outputType            OutputType @map("output_type")
+  title                 String
+  targetPublicationName String     @map("target_publication_name")
+  documentFileUrl       String     @map("document_file_url")
+  publicationStatus     String     @default("DRAFT") @map("publication_status") // DRAFT | SUBMITTED | ACCEPTED | PUBLISHED
+  isVerifiedByLecturer  Boolean    @default(false) @map("is_verified_by_lecturer")
+  submittedAt           DateTime   @default(now()) @map("submitted_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@map("research_outputs")
+}
+
+model GradeAssessment {
+  id                      String   @id @default(uuid())
+  applicationId           String   @unique @map("application_id")
+  evaluatorId             String   @map("evaluator_id")
+  scoreDisciplineLogbook  Decimal  @map("score_discipline_logbook") // Bobot 20%
+  scoreResearchQuality    Decimal  @map("score_research_quality") // Bobot 30%
+  scoreOutputAchievement  Decimal  @map("score_output_achievement") // Bobot 30%
+  scoreReportPresentation Decimal  @map("score_report_presentation") // Bobot 20%
+  finalNumericScore       Decimal  @map("final_numeric_score")
+  letterGrade             String   @map("letter_grade") // A | B+ | B | C+ | C | D | E
+  isLockedByCoordinator   Boolean  @default(false) @map("is_locked_by_coordinator")
+  finalizedAt             DateTime @default(now()) @map("finalized_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  evaluator   User        @relation(fields: [evaluatorId], references: [id])
+
+  @@map("grade_assessments")
+}
+
+model SimpelmasSyncLog {
+  id                  String   @id @default(uuid())
+  applicationId       String   @map("application_id")
+  triggeredBy         String   @map("triggered_by")
+  syncStatus          String   @map("sync_status") // SUCCESS | FAILED
+  // Ekstensi Fase 4: ID referensi batch, mis. SYNC-SIMPELMAS-2026-11-13-001
+  batchReferenceId    String?  @map("batch_reference_id")
+  simpelmasExternalId String?  @map("simpelmas_external_id")
+  payloadSent         String   @map("payload_sent")
+  responseReceived    String   @map("response_received")
+  syncedAt            DateTime @default(now()) @map("synced_at")
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [triggeredBy], references: [id])
+
+  @@index([applicationId])
+  @@index([batchReferenceId])
+  @@map("simpelmas_sync_logs")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?  @map("user_id")
+  actionName  String   @map("action_name")
+  entityName  String   @map("entity_name")
+  entityId    String   @map("entity_id")
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent")
+  payloadJson String?  @map("payload_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
