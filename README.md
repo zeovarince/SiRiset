@@ -69,6 +69,7 @@ c:\Users\renos\Downloads\SEMESTER 5\PEMODELAN PROSES BISNIS\SiRiset\markdown\
 ├── ui-ux-design-wireframes.md      # Information Architecture, Sitemap, Token Desain, & Rangka Layar (Wireframes)
 ├── implementation-roadmap.md       # Roadmap Sprint, RACI Matrix Anggota Kelompok 2, Rencana QA, & Panduan Ujian
 ├── urutan-pengerjaan.md            # Panduan Eksekusi Bertahap (Fase 0 - Fase 8) untuk AI Agent Claude Code
+├── prompts-claude-code.md          # Kumpulan Prompt Eksekusi Siap Pakai untuk Claude Code Opus (Branch: reno-development)
 └── images/                         # Aset visual & diagram BPMN resmi
     ├── bpmn-asis-overview.png
     ├── bpmn-asis-tahap1-penawaran.png
