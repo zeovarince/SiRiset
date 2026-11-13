@@ -25,6 +25,27 @@
 
 ---
 
+## 🚀 Petunjuk Cepat Menjalankan Sistem (Local Setup)
+
+```bash
+# 1. Pasang seluruh dependensi
+npm install
+
+# 2. Siapkan file konfigurasi environment
+cp .env.example .env
+
+# 3. Sinkronkan skema database & semai data demo (SQLite)
+npm run db:push
+npm run db:seed
+
+# 4. Jalankan server pengembang
+npm run dev
+```
+
+Buka peramban di `http://localhost:3000`. Untuk simulasi demonstrasi pengujian di hadapan Dosen Penguji, panduan alur menit-per-menit dan akun pengujian telah disediakan di [DEMO-GUIDE.md](DEMO-GUIDE.md).
+
+---
+
 ## 🎯 Latar Belakang & Urgensi Proyek
 
 Berdasarkan hasil wawancara mendalam bersama narasumber mahasiswa aktif MBKM Riset (**Ilyas**) dan Dosen Peneliti penerima hibah (**Bapak Dr. Mula'ab, S.Si., M.Kom.**) pada 14 Oktober 2026, serta telaah dokumen resmi universitas (Buku Panduan MBKM Penelitian LPPM UTM 2023, Panduan Penelitian Mandiri Edisi IX LPPM UTM 2026, dan Panduan Sosialisasi MBKM IF FT UTM 2026/2027), ditemukan bahwa pelaksanaan program MBKM Riset saat ini (kondisi *As-Is*) menghadapi kendala fragmentasi birokrasi dan data yang masif.
